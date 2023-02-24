@@ -1,24 +1,6 @@
 import psycopg2
 
 
-def main():
-    """
-    Main function to load the database.
-    Connects to the database, processes the files, extracts data, forms queries, and sends queries to the database.
-    """
-    # connect to database
-    conn = connect_db()
-    cur = conn.cursor()
-    cur.execute('INSERT INTO Team VALUES (\'Chelsea\')')
-    cur.execute('SELECT * FROM team')
-
-    # TODO: Add team 'Man.Utd' to Team table and parse thru their data and add to database
-
-    results = cur.fetchall()
-    conn.commit()
-    print(results)
-
-
 def connect_db():
     """
     Connects to the remote database.
@@ -39,6 +21,12 @@ def connect_db():
 
 
 def create_tables(conn):
+    """
+    Creates tables for the database. Should only be called once.
+
+    :param conn: the database connection
+    :return: 0 on success
+    """
     match_query = 'CREATE TABLE Match(' \
                   'match_id INT NOT NULL,' \
                   'date DATE,' \
@@ -78,6 +66,51 @@ def create_tables(conn):
 
     return status
 
+
+def parse_csv_and_update_db(filename, conn):
+    """
+    Parses through a csv file with data from https://football-lineups.com that contains
+    all matches for a given team (who's team_name is the filename). Data from each match is then
+    uploaded to the database line by line.
+
+    :param filename: the csv file to parse for the given team who's team_name is the filename
+    :param conn: the database connection
+    :return:
+    """
+
+    # open file
+
+    # for each line
+
+    # GET DATE
+    # if full date given, update current_month_year
+    # else if short date, append current_month_year
+    # else, set to None
+
+    # GET IS_HOME, OPPONENT, COMPETITION
+
+    # GET SCORE
+    # ensure format is 'X-X'
+
+    # GET REMAINING STATS FOR THIS TEAM
+
+
+def main():
+    """
+    Main function to load the database.
+    Connects to the database, processes the files, extracts data, forms queries, and sends queries to the database.
+    """
+    # connect to database
+    conn = connect_db()
+    cur = conn.cursor()
+    cur.execute('INSERT INTO Team VALUES (\'Chelsea\')')
+    cur.execute('SELECT * FROM team')
+
+    # TODO: Add team 'Man.Utd' to Team table and parse thru their data and add to database
+
+    results = cur.fetchall()
+    conn.commit()
+    print(results)
 
 if __name__ == '__main__':
     main()
