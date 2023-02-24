@@ -103,7 +103,6 @@ def main():
     # connect to database
     conn = connect_db()
     cur = conn.cursor()
-    cur.execute('INSERT INTO Team VALUES (\'Chelsea\')')
     cur.execute('SELECT * FROM team')
 
     # TODO: Add team 'Man.Utd' to Team table and parse thru their data and add to database
@@ -111,6 +110,7 @@ def main():
     results = cur.fetchall()
     conn.commit()
     print(results)
+
 
 if __name__ == '__main__':
     main()
