@@ -1,4 +1,6 @@
 import psycopg2
+import pandas
+import numpy as np
 
 
 def connect_db():
@@ -79,20 +81,33 @@ def parse_csv_and_update_db(filename, conn):
     """
 
     # open file
-
+    raw_data = pandas.read_csv(filename, encoding='unicode_escape')
+    # TODO: Deal with matches that went to pens (score of pens goes to next row with everything else blank)
+    print(raw_data)
+    current_month_year = ''
     # for each line
+    for match in raw_data.values.tolist():
+        # GET DATE
+        date = str(match[0])
+        print(date)
+        # if date == nan, set to None
+        if date == 'nan':
+            date = 'got'
+        # else if full date given, update current_month_year
+        elif len(date) > 2:
+            current_month_year = date[-7:]
+        # else if short date, append current_month_year
+        elif len(date) > 0:
+            date = date + current_month_year
+        # else, set to None
+        else:
+            date = None
+        # GET IS_HOME, OPPONENT, COMPETITION
 
-    # GET DATE
-    # if full date given, update current_month_year
-    # else if short date, append current_month_year
-    # else, set to None
+        # GET SCORE
+        # ensure format is 'X-X'
 
-    # GET IS_HOME, OPPONENT, COMPETITION
-
-    # GET SCORE
-    # ensure format is 'X-X'
-
-    # GET REMAINING STATS FOR THIS TEAM
+        # GET REMAINING STATS FOR THIS TEAM
 
 
 def main():
@@ -109,7 +124,7 @@ def main():
 
     results = cur.fetchall()
     conn.commit()
-    print(results)
+    parse_csv_and_update_db('Man.Utd.csv', conn)
 
 
 if __name__ == '__main__':
