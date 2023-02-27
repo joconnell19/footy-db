@@ -1,6 +1,7 @@
 import psycopg2
 import pandas
 import numpy as np
+import math
 
 
 def connect_db():
@@ -82,17 +83,21 @@ def parse_csv_and_update_db(filename, conn):
 
     # open file
     raw_data = pandas.read_csv(filename, encoding='unicode_escape')
-    # TODO: Deal with matches that went to pens (score of pens goes to next row with everything else blank)
-    print(raw_data)
+    # fix pen score issue
+    raw_data = fix_penalty_scores(raw_data)
+
+    # TODO: upload this team (filename) to database
+    team_name = filename[:-4]
+    # upload_team(conn, team_name)
+
     current_month_year = ''
-    # for each line
+    # for each match, extract stats, upload to db
     for match in raw_data.values.tolist():
         # GET DATE
-        date = str(match[0])
-        print(date)
+        date = match[0]
         # if date == nan, set to None
-        if date == 'nan':
-            date = 'got'
+        if type(date) == float:
+            date = None
         # else if full date given, update current_month_year
         elif len(date) > 2:
             current_month_year = date[-7:]
@@ -102,12 +107,72 @@ def parse_csv_and_update_db(filename, conn):
         # else, set to None
         else:
             date = None
-        # GET IS_HOME, OPPONENT, COMPETITION
 
-        # GET SCORE
-        # ensure format is 'X-X'
+        if date is not None:
+            # GET IS_HOME, OPPONENT, COMPETITION
+            is_home = match[1]
+            if is_home == 'home':
+                is_home = True
+            else:
+                is_home = False
+            opponent = match[2]
+            competition = match[3]
 
-        # GET REMAINING STATS FOR THIS TEAM
+            # GET SCORE
+            # ensure format is 'X-X'
+            if type(match[4]) == float:
+                score = None
+            else:
+                score = match[4].replace('/', '-')
+
+            # GET REMAINING STATS FOR THIS TEAM
+            if type(match[6]) == float:
+                formation = None
+            else:
+                formation = match[6][4:]
+
+            shots = match[9]
+            shots_on_goal = match[10]
+            fouls = match[11]
+            corners = match[12]
+            offside = match[13]
+            possession = match[14]
+            attendance = match[15]
+
+            # TODO: UPLOAD TO DB
+            # match_id = upload_match(conn, date, score, competition, attendance)
+            # upload_team(conn, opponent)
+            # upload_team_match_stats(conn, match_id, team_name, is_home, formation,
+            # possession, shots, shots_on_goal, fouls, corners, offside)
+
+
+def fix_penalty_scores(raw_data):
+    """
+    Iterates through each match and makes sure that the score of penalties (if applicable), is copied from the
+    proceeding row and appended to the relevant match's score.
+
+    :param raw_data: pandas dataframe of all matches
+    :return: raw_data updated with fixed penalty scores
+    """
+
+    for match in raw_data.values.tolist():
+        # if no date
+        if type(match[0]) != str:
+            if math.isnan(match[0]):
+                # get score
+                score = match[4]
+                # if score has '('
+                if score.__contains__('('):
+                    # append to prev score
+                    raw_data['score'][np.where(raw_data['score'] == score)[0] - 1] = \
+                        raw_data['score'][np.where(raw_data['score'] == score)[0] - 1] + ' ' + score
+
+    for match in raw_data.values.tolist():
+        score = str(match[4])
+        if score.count('(') > 1:
+            raw_data['score'][np.where(raw_data['score'] == score)[0]] = score[:score.rfind('(')]
+
+    return raw_data
 
 
 def main():
@@ -129,4 +194,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
