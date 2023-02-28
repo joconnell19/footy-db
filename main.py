@@ -90,9 +90,9 @@ def parse_csv_and_update_db(filename, conn):
     # fix pen score issue
     raw_data = fix_penalty_scores(raw_data)
 
-    # TODO: upload this team (filename) to database
+    # upload this team (filename) to database
     team_name = filename[:-4]
-    # upload_team(conn, team_name)
+    upload_team(conn, team_name)
 
     current_month_year = ''
     # for each match, extract stats, upload to db
@@ -131,11 +131,14 @@ def parse_csv_and_update_db(filename, conn):
             possession = convert_to_int(match[14])
             attendance = convert_to_int(match[15])
 
-            # TODO: UPLOAD TO DB
+            # UPLOAD TO DB
             match_id = upload_match(conn, date, score, competition, attendance)
-            # upload_team(conn, opponent)
-            # upload_team_match_stats(conn, match_id, team_name, is_home, formation,
-            # possession, shots, shots_on_goal, fouls, corners, offside)
+            upload_team(conn, opponent)
+            # upload this team's match stats
+            upload_team_match_stats(conn, match_id, team_name, is_home, formation,
+                                    possession, shots, shots_on_goal, fouls, corners, offside)
+            # upload opponent's match stats
+            upload_team_match_stats(conn, match_id, opponent, not is_home, None, None, None, None, None, None, None)
 
 
 def fix_penalty_scores(raw_data):
@@ -218,6 +221,25 @@ def convert_to_int(stat):
     return stat
 
 
+def upload_team(conn, team_name):
+    """
+    Uploads a given team to the database.
+
+    :param conn: the database connection
+    :param team_name: name of team
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO Team (team_name) VALUES (%s);", (team_name,))
+        conn.commit()
+        print('UPLOADED TEAM TO DATABASE!:', team_name)
+    except pyodbc.Error as err:
+        print(err)
+    except psycopg2.DatabaseError as db_err:
+        print(db_err)
+        conn.rollback()
+
+
 def upload_match(conn, date, score, competition, attendance):
     """
     Uploads a match to the database with the given params and the next consecutively available match id.
@@ -229,26 +251,59 @@ def upload_match(conn, date, score, competition, attendance):
     :param attendance: the match attendance as an int
     :return:
     """
+    match_id = 1
 
     try:
         cur = conn.cursor()
         cur.execute('SELECT max(match_id) FROM Match')
         response = cur.fetchall()[0][0]
-        match_id = 1
         if response is not None:
             match_id = response + 1
 
         cur.execute("INSERT INTO Match (match_id, date, score, competition, attendance)"
                     "VALUES (%s, %s, %s, %s, %s);", (match_id, date, score, competition, attendance))
         conn.commit()
-        print('UPLOADED TO DATABASE!:', match_id, date, score, competition, attendance)
+        print('UPLOADED MATCH TO DATABASE!:', match_id, date, score, competition, attendance)
 
     except pyodbc.Error as err:
         print(err)
     except psycopg2.DatabaseError as db_err:
         print(db_err)
+        conn.rollback()
 
     return match_id
+
+
+def upload_team_match_stats(conn, match_id, team_name, is_home, formation, possession, shots, shots_on_goal,
+                            fouls, corners, offside):
+    """
+    Uploads team match stats to the database with the given params.
+
+    :param conn: the database connection
+    :param match_id: the id of the match in question
+    :param team_name: the id of the team playing in the given match
+    :param is_home: if this team (team_name) was home for this match
+    :param formation: the formation this team used
+    :param possession: how much possession this team has as a percentage
+    :param shots: how many shots this team had
+    :param shots_on_goal: how many shots on target this team had
+    :param fouls: how many fouls this team committed
+    :param corners: how many corners this team won
+    :param offside: how many times this team was offside
+    """
+    try:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO Team_Match_Stats (match_id, team_name, is_home, formation, possession, shots,"
+                    "shots_on_goal, fouls, corners, offside) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (match_id, team_name, is_home, formation, possession, shots, shots_on_goal,
+                     fouls, corners, offside))
+        conn.commit()
+        print('UPLOADED TEAM MATCH STATS TO DATABASE!!:', match_id, team_name)
+    except pyodbc.Error as err:
+        print(err)
+    except psycopg2.DatabaseError as db_err:
+        print(db_err)
+        conn.rollback()
 
 
 def main():
@@ -257,14 +312,14 @@ def main():
     """
     # connect to database
     conn = connect_db()
+
+    # parse_csv_and_update_db('Man.Utd.csv', conn)
+
     cur = conn.cursor()
-    cur.execute('SELECT * FROM team')
-
-    # TODO: Add team 'Man.Utd' to Team table and parse thru their data and add to database
-
-    results = cur.fetchall()
-    conn.commit()
-    parse_csv_and_update_db('Man.Utd.csv', conn)
+    cur.execute("SELECT * FROM match NATURAL JOIN team_match_stats GROUP BY match_id, team_name, is_home, formation,"
+                "possession, shots, shots_on_goal, fouls, corners, offside ORDER BY match_id")
+    response = cur.fetchall()
+    print('done')
 
 
 if __name__ == '__main__':
