@@ -1,7 +1,11 @@
+import datetime
+
 import psycopg2
 import pandas
 import numpy as np
 import math
+
+import pyodbc
 
 
 def connect_db():
@@ -94,19 +98,7 @@ def parse_csv_and_update_db(filename, conn):
     # for each match, extract stats, upload to db
     for match in raw_data.values.tolist():
         # GET DATE
-        date = match[0]
-        # if date == nan, set to None
-        if type(date) == float:
-            date = None
-        # else if full date given, update current_month_year
-        elif len(date) > 2:
-            current_month_year = date[-7:]
-        # else if short date, append current_month_year
-        elif len(date) > 0:
-            date = date + current_month_year
-        # else, set to None
-        else:
-            date = None
+        date, current_month_year = format_date(match[0], current_month_year)
 
         if date is not None:
             # GET IS_HOME, OPPONENT, COMPETITION
@@ -131,16 +123,16 @@ def parse_csv_and_update_db(filename, conn):
             else:
                 formation = match[6][4:]
 
-            shots = match[9]
-            shots_on_goal = match[10]
-            fouls = match[11]
-            corners = match[12]
-            offside = match[13]
-            possession = match[14]
-            attendance = match[15]
+            shots = convert_to_int(match[9])
+            shots_on_goal = convert_to_int(match[10])
+            fouls = convert_to_int(match[11])
+            corners = convert_to_int(match[12])
+            offside = convert_to_int(match[13])
+            possession = convert_to_int(match[14])
+            attendance = convert_to_int(match[15])
 
             # TODO: UPLOAD TO DB
-            # match_id = upload_match(conn, date, score, competition, attendance)
+            match_id = upload_match(conn, date, score, competition, attendance)
             # upload_team(conn, opponent)
             # upload_team_match_stats(conn, match_id, team_name, is_home, formation,
             # possession, shots, shots_on_goal, fouls, corners, offside)
@@ -175,10 +167,93 @@ def fix_penalty_scores(raw_data):
     return raw_data
 
 
+def format_date(raw_date, current_month_year):
+    """
+    Converts a raw date from the CSV file into a proper datetime.date() object.
+
+    :param raw_date: from the CSV file
+    :param current_month_year: the month and year of this iteration of the parse_csv_and_update_db() loop
+    :return: formatted date and the updated current month year if applicable
+    """
+    date = None
+    # ENSURE WE HAVE DAY MONTH AND YEAR
+    # if date == nan, set to None
+    if type(raw_date) == float:
+        date = None
+    # else if full date given, update current_month_year
+    elif len(raw_date) > 2:
+        current_month_year = raw_date[-7:]
+    # else if short date, append current_month_year
+    elif len(raw_date) > 0:
+        date = raw_date + current_month_year
+
+    if date is not None:
+        # ENSURE WE HAVE 4 DIGIT YEAR
+        if date.index('-') == 1:
+            date = '0' + date
+        year = date[-2:]
+        if int(year) <= int((str(datetime.date.today().year))[-2:]):
+            year = '20' + year
+        else:
+            year = '19' + year
+        date = date[0:-2] + year
+
+        # CONVERT TO DATETIME DATE
+        date = datetime.datetime.strptime(date, '%d-%b-%Y').date()
+
+    return date, current_month_year
+
+
+def convert_to_int(stat):
+    """
+    Converts a given stat to an int if numeric, else None
+    :param stat: a stat from the CSV file
+    :return: an int if numeric, else None
+    """
+    if stat.isnumeric():
+        stat = int(stat)
+    else:
+        stat = None
+
+    return stat
+
+
+def upload_match(conn, date, score, competition, attendance):
+    """
+    Uploads a match to the database with the given params and the next consecutively available match id.
+
+    :param conn: the database connection
+    :param date: the date of the match as a datetime.date()
+    :param score: the score e.g. '0-0'
+    :param competition: the competition of the match as a str
+    :param attendance: the match attendance as an int
+    :return:
+    """
+
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT max(match_id) FROM Match')
+        response = cur.fetchall()[0][0]
+        match_id = 1
+        if response is not None:
+            match_id = response + 1
+
+        cur.execute("INSERT INTO Match (match_id, date, score, competition, attendance)"
+                    "VALUES (%s, %s, %s, %s, %s);", (match_id, date, score, competition, attendance))
+        conn.commit()
+        print('UPLOADED TO DATABASE!:', match_id, date, score, competition, attendance)
+
+    except pyodbc.Error as err:
+        print(err)
+    except psycopg2.DatabaseError as db_err:
+        print(db_err)
+
+    return match_id
+
+
 def main():
     """
     Main function to load the database.
-    Connects to the database, processes the files, extracts data, forms queries, and sends queries to the database.
     """
     # connect to database
     conn = connect_db()
