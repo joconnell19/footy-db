@@ -4,7 +4,6 @@ import psycopg2
 import pandas
 import numpy as np
 import math
-
 import pyodbc
 
 
@@ -131,14 +130,50 @@ def parse_csv_and_update_db(filename, conn):
             possession = convert_to_int(match[14])
             attendance = convert_to_int(match[15])
 
+
             # UPLOAD TO DB
-            match_id = upload_match(conn, date, score, competition, attendance)
-            upload_team(conn, opponent)
-            # upload this team's match stats
+
+            # query for opponent
+            cur = conn.cursor()
+            cur.execute('SELECT team_name FROM team WHERE team_name = %s', (opponent,))
+            response = cur.fetchall()
+            # if opponent doesn't exist, upload to team
+            if len(response) == 0:
+                upload_team(conn, opponent)
+
+            # query for match with date and teams
+            cur.execute("SELECT t1.match_id, t1.team_name, t2.team_name, date "
+                        "FROM team_match_stats t1 JOIN team_match_stats t2 "
+                        "ON t1.match_id = t2.match_id JOIN match "
+                        "ON t1.match_id = match.match_id "
+                        "WHERE t1.team_name = %s AND t2.team_name = %s AND date = %s", (team_name, opponent, date))
+            match_exists = cur.fetchall()
+
+            # if match exists
+            if len(match_exists) > 0:
+                # get id
+                match_id = match_exists[0][0]
+            # otherwise
+            else:
+                # upload match and get new match id
+                match_id = upload_match(conn, date, score, competition, attendance)
+                # upload opponent to team match stats
+                upload_team_match_stats(conn, match_id, opponent, not is_home, None, None, None, None, None, None, None)
+
+            # upload to team match stats
             upload_team_match_stats(conn, match_id, team_name, is_home, formation,
                                     possession, shots, shots_on_goal, fouls, corners, offside)
-            # upload opponent's match stats
-            upload_team_match_stats(conn, match_id, opponent, not is_home, None, None, None, None, None, None, None)
+
+            # TODO: FIX ERROR WHERE SOME SCORES WITH 0 are mistakenly replaced with a 1
+            # TODO: NEED TO DELETE EXISTING TEAM MATCH STATS FOR MATCH THAT ALREADY EXISTS BEFORE UPLOADING
+            # # upload to team match stats
+            # match_id = upload_match(conn, date, score, competition, attendance)
+            # upload_team(conn, opponent)
+            # # upload this team's match stats
+            # upload_team_match_stats(conn, match_id, team_name, is_home, formation,
+            #                         possession, shots, shots_on_goal, fouls, corners, offside)
+            # # upload opponent's match stats
+            # upload_team_match_stats(conn, match_id, opponent, not is_home, None, None, None, None, None, None, None)
 
 
 def fix_penalty_scores(raw_data):
@@ -313,12 +348,13 @@ def main():
     # connect to database
     conn = connect_db()
 
-    # parse_csv_and_update_db('Man.Utd.csv', conn)
+    parse_csv_and_update_db('Liverpool.csv', conn)
 
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM match NATURAL JOIN team_match_stats GROUP BY match_id, team_name, is_home, formation,"
-                "possession, shots, shots_on_goal, fouls, corners, offside ORDER BY match_id")
-    response = cur.fetchall()
+    # cur = conn.cursor()
+    # cur.execute("SELECT * FROM match NATURAL JOIN team_match_stats GROUP BY match_id, team_name, is_home, formation,"
+    #             "possession, shots, shots_on_goal, fouls, corners, offside ORDER BY match_id")
+    # response = cur.fetchall()
+    # print(response)
     print('done')
 
 
