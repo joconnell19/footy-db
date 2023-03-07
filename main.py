@@ -115,13 +115,19 @@ def parse_csv_and_update_db(filename, conn):
                 score = None
             else:
                 score = match[4].replace('/', '-')
+            # ensure home goals are first
+            if not is_home and score is not None:
+                if score.__contains__('('):
+                    score = score[2] + score[1] + score[0] + score[3:]
+                else:
+                    scores = score.split('-')
+                    score = scores[1] + '-' + scores[0]
 
             # GET REMAINING STATS FOR THIS TEAM
             if type(match[6]) == float:
                 formation = None
             else:
                 formation = match[6][4:]
-
             shots = convert_to_int(match[9])
             shots_on_goal = convert_to_int(match[10])
             fouls = convert_to_int(match[11])
@@ -130,9 +136,7 @@ def parse_csv_and_update_db(filename, conn):
             possession = convert_to_int(match[14])
             attendance = convert_to_int(match[15])
 
-
             # UPLOAD TO DB
-
             # query for opponent
             cur = conn.cursor()
             cur.execute('SELECT team_name FROM team WHERE team_name = %s', (opponent,))
@@ -141,12 +145,15 @@ def parse_csv_and_update_db(filename, conn):
             if len(response) == 0:
                 upload_team(conn, opponent)
 
-            # query for match with date and teams
-            cur.execute("SELECT t1.match_id, t1.team_name, t2.team_name, date "
-                        "FROM team_match_stats t1 JOIN team_match_stats t2 "
-                        "ON t1.match_id = t2.match_id JOIN match "
-                        "ON t1.match_id = match.match_id "
-                        "WHERE t1.team_name = %s AND t2.team_name = %s AND date = %s", (team_name, opponent, date))
+            # identify home & away teams then query for match with date and teams
+            if is_home:
+                home_team = team_name
+                away_team = opponent
+            else:
+                home_team = opponent
+                away_team = team_name
+            cur.execute("SELECT match_id FROM match WHERE home_team = %s AND "
+                        "away_team = %s AND date = %s", (home_team, away_team, date))
             match_exists = cur.fetchall()
 
             # if match exists
@@ -156,24 +163,11 @@ def parse_csv_and_update_db(filename, conn):
             # otherwise
             else:
                 # upload match and get new match id
-                match_id = upload_match(conn, date, score, competition, attendance)
-                # upload opponent to team match stats
-                upload_team_match_stats(conn, match_id, opponent, not is_home, None, None, None, None, None, None, None)
+                match_id = upload_match(conn, date, score, competition, attendance, home_team, away_team)
 
             # upload to team match stats
             upload_team_match_stats(conn, match_id, team_name, is_home, formation,
                                     possession, shots, shots_on_goal, fouls, corners, offside)
-
-            # TODO: FIX ERROR WHERE SOME SCORES WITH 0 are mistakenly replaced with a 1
-            # TODO: NEED TO DELETE EXISTING TEAM MATCH STATS FOR MATCH THAT ALREADY EXISTS BEFORE UPLOADING
-            # # upload to team match stats
-            # match_id = upload_match(conn, date, score, competition, attendance)
-            # upload_team(conn, opponent)
-            # # upload this team's match stats
-            # upload_team_match_stats(conn, match_id, team_name, is_home, formation,
-            #                         possession, shots, shots_on_goal, fouls, corners, offside)
-            # # upload opponent's match stats
-            # upload_team_match_stats(conn, match_id, opponent, not is_home, None, None, None, None, None, None, None)
 
 
 def fix_penalty_scores(raw_data):
@@ -275,7 +269,7 @@ def upload_team(conn, team_name):
         conn.rollback()
 
 
-def upload_match(conn, date, score, competition, attendance):
+def upload_match(conn, date, score, competition, attendance, home_team, away_team):
     """
     Uploads a match to the database with the given params and the next consecutively available match id.
 
@@ -284,6 +278,8 @@ def upload_match(conn, date, score, competition, attendance):
     :param score: the score e.g. '0-0'
     :param competition: the competition of the match as a str
     :param attendance: the match attendance as an int
+    :param home_team: the home team
+    :param away_team: the away team
     :return:
     """
     match_id = 1
@@ -295,10 +291,11 @@ def upload_match(conn, date, score, competition, attendance):
         if response is not None:
             match_id = response + 1
 
-        cur.execute("INSERT INTO Match (match_id, date, score, competition, attendance)"
-                    "VALUES (%s, %s, %s, %s, %s);", (match_id, date, score, competition, attendance))
+        cur.execute("INSERT INTO Match (match_id, date, score, competition, attendance, home_team, away_team)"
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s);", (match_id, date, score, competition, attendance, home_team,
+                                                             away_team))
         conn.commit()
-        print('UPLOADED MATCH TO DATABASE!:', match_id, date, score, competition, attendance)
+        print('UPLOADED MATCH TO DATABASE!:', match_id, date, score, competition, attendance, home_team, away_team)
 
     except pyodbc.Error as err:
         print(err)
