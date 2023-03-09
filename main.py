@@ -5,6 +5,9 @@ import pandas
 import numpy as np
 import math
 import pyodbc
+import requests
+from scipy import stats
+import matplotlib.pyplot as plt
 
 
 def connect_db():
@@ -95,7 +98,9 @@ def parse_csv_and_update_db(filename, conn):
 
     current_month_year = ''
     # for each match, extract stats, upload to db
+    line = 0
     for match in raw_data.values.tolist():
+        line += 1
         # GET DATE
         date, current_month_year = format_date(match[0], current_month_year)
 
@@ -127,7 +132,12 @@ def parse_csv_and_update_db(filename, conn):
             if type(match[6]) == float:
                 formation = None
             else:
-                formation = match[6][4:]
+                # get formation at end of bogus string (1st good char is number)
+                formation = None
+                for i in range(0, len(match[6])):
+                    if match[6][i].isnumeric() and formation is None:
+                        formation = match[6][i:]
+
             shots = convert_to_int(match[9])
             shots_on_goal = convert_to_int(match[10])
             fouls = convert_to_int(match[11])
@@ -168,6 +178,7 @@ def parse_csv_and_update_db(filename, conn):
             # upload to team match stats
             upload_team_match_stats(conn, match_id, team_name, is_home, formation,
                                     possession, shots, shots_on_goal, fouls, corners, offside)
+        print('\nPERCENT COMPLETE: %.2f' % ((line / len(raw_data.values.tolist())) * 100), '%')
 
 
 def fix_penalty_scores(raw_data):
@@ -186,7 +197,9 @@ def fix_penalty_scores(raw_data):
                 # get score
                 score = match[4]
                 # if score has '('
-                if score.__contains__('('):
+                if type(score) == float:
+                    score = None
+                elif score.__contains__('('):
                     # append to prev score
                     raw_data['score'][np.where(raw_data['score'] == score)[0] - 1] = \
                         raw_data['score'][np.where(raw_data['score'] == score)[0] - 1] + ' ' + score
@@ -261,7 +274,7 @@ def upload_team(conn, team_name):
         cur = conn.cursor()
         cur.execute("INSERT INTO Team (team_name) VALUES (%s);", (team_name,))
         conn.commit()
-        print('UPLOADED TEAM TO DATABASE!:', team_name)
+        print('\tUPLOADED TEAM TO DATABASE!:', team_name)
     except pyodbc.Error as err:
         print(err)
     except psycopg2.DatabaseError as db_err:
@@ -295,7 +308,7 @@ def upload_match(conn, date, score, competition, attendance, home_team, away_tea
                     "VALUES (%s, %s, %s, %s, %s, %s, %s);", (match_id, date, score, competition, attendance, home_team,
                                                              away_team))
         conn.commit()
-        print('UPLOADED MATCH TO DATABASE!:', match_id, date, score, competition, attendance, home_team, away_team)
+        print('\tUPLOADED MATCH TO DATABASE!:', match_id, date, score, competition, attendance, home_team, away_team)
 
     except pyodbc.Error as err:
         print(err)
@@ -330,12 +343,43 @@ def upload_team_match_stats(conn, match_id, team_name, is_home, formation, posse
                     (match_id, team_name, is_home, formation, possession, shots, shots_on_goal,
                      fouls, corners, offside))
         conn.commit()
-        print('UPLOADED TEAM MATCH STATS TO DATABASE!!:', match_id, team_name)
+        print('\tUPLOADED TEAM MATCH STATS TO DATABASE!:', match_id, team_name)
     except pyodbc.Error as err:
         print(err)
     except psycopg2.DatabaseError as db_err:
         print(db_err)
         conn.rollback()
+
+
+def get_win_loss_per_year(matches):
+    wins = {}
+    years = []
+
+    for match in matches.values:
+        year = match[0].year
+        if year not in wins.keys():
+            years.append(year)
+            wins.update({year: [0, 0]})
+        is_433_home = match[4]
+        if is_433_home:
+            if match[1][0] > match[1][2]:
+                wins[year][0] += 1
+            elif match[1][0] < match[1][2]:
+                wins[year][1] += 1
+        else:
+            if match[1][0] < match[1][2]:
+                wins[year][0] += 1
+            elif match[1][0] > match[1][2]:
+                wins[year][1] += 1
+    win_loss_per_year = []
+
+    for year in wins:
+        if wins[year][1] == 0:
+            wins[year][1] = 1
+
+        win_loss_per_year.append(wins[year][0] / wins[year][1])
+
+    return np.array(win_loss_per_year), np.array(years)
 
 
 def main():
@@ -345,13 +389,57 @@ def main():
     # connect to database
     conn = connect_db()
 
-    parse_csv_and_update_db('Liverpool.csv', conn)
+    # parse_csv_and_update_db('West Ham.csv', conn)
 
-    # cur = conn.cursor()
-    # cur.execute("SELECT * FROM match NATURAL JOIN team_match_stats GROUP BY match_id, team_name, is_home, formation,"
-    #             "possession, shots, shots_on_goal, fouls, corners, offside ORDER BY match_id")
-    # response = cur.fetchall()
-    # print(response)
+    # GET vs 442 ratio
+    vs_442_query = "SELECT date, score, a.team_name, a.formation, a.is_home, b.team_name, b.formation, b.is_home " \
+             "FROM team_match_stats a JOIN team_match_stats b " \
+             "ON a.match_id = b.match_id " \
+             "JOIN match ON match.match_id = a.match_id " \
+             "WHERE a.formation = '4-3-3' AND b.formation = '4-4-2' " \
+             "ORDER BY date"
+    vs_442_matches = pandas.read_sql(vs_442_query, conn)
+    vs_442_win_loss, vs_442_years = get_win_loss_per_year(vs_442_matches)
+
+    # GET vs other formations ratio
+    vs_other_query = "SELECT date, score, a.team_name, a.formation, a.is_home, b.team_name, b.formation, b.is_home " \
+                     "FROM team_match_stats a JOIN team_match_stats b " \
+                     "ON a.match_id = b.match_id " \
+                     "JOIN match ON match.match_id = a.match_id " \
+                     "WHERE a.formation = '4-3-3' AND b.formation != '4-4-2' " \
+                     "ORDER BY date"
+    vs_other_matches = pandas.read_sql(vs_other_query, conn)
+    vs_other_win_loss, vs_other_years = get_win_loss_per_year(vs_other_matches)
+
+    # plot hist of vs 442
+    plt.bar(vs_442_years, vs_442_win_loss)
+    plt.title('Win-Loss Ratio of 4-3-3 vs 4-4-2 over the years')
+    plt.minorticks_on()
+    plt.xlabel('Year')
+    plt.ylabel('W/L Ratio')
+    plt.show()
+
+    # plot hist of vs other
+    plt.bar(vs_other_years, vs_other_win_loss)
+    plt.title('Win-Loss Ratio of 4-3-3 vs Other Formation over the years')
+    plt.minorticks_on()
+    plt.xlabel('Year')
+    plt.ylabel('W/L Ratio')
+    plt.show()
+
+    # run standard test
+    x = np.concatenate((vs_442_win_loss, vs_other_win_loss))
+    k2, p = stats.normaltest(x)
+
+    # run shapiro test
+    shapiro_test = stats.shapiro(x)
+    p_shapiro = shapiro_test.pvalue
+
+
+    # perform Mann-Whitney U test
+    planned_result = stats.mannwhitneyu(vs_442_win_loss, vs_other_win_loss, alternative='greater')
+    p_planned = planned_result.pvalue
+
     print('done')
 
 
